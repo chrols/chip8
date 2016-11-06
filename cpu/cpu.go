@@ -2,7 +2,9 @@ package chip8
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
+	"time"
 )
 
 const (
@@ -20,6 +22,9 @@ type Cpu struct {
 	SoundTimer     byte
 	IndexRegister  uint16
 	Display        []bool
+	KeyPressed     [0x10]bool
+	Stack          [0x10]uint16
+	StackPointer   byte
 }
 
 func (cpu *Cpu) Reset() {
@@ -29,6 +34,26 @@ func (cpu *Cpu) Reset() {
 	cpu.DelayTimer = 0
 	cpu.SoundTimer = 0
 	cpu.IndexRegister = 0
+	copy(cpu.Memory[0:], []byte{0xF0, 0x90, 0x90, 0x90, 0xF0})  // 0
+	copy(cpu.Memory[5:], []byte{0x20, 0x60, 0x20, 0x20, 0x70})  // 1
+	copy(cpu.Memory[10:], []byte{0xF0, 0x10, 0xF0, 0x80, 0xF0}) // 2
+	copy(cpu.Memory[15:], []byte{0xF0, 0x10, 0xF0, 0x10, 0xF0}) // 3
+	copy(cpu.Memory[20:], []byte{0x90, 0x90, 0xF0, 0x10, 0x10}) // 4
+	copy(cpu.Memory[25:], []byte{0xF0, 0x80, 0xF0, 0x10, 0xF0}) // 5
+	copy(cpu.Memory[30:], []byte{0xF0, 0x80, 0xF0, 0x90, 0xF0}) // 6
+	copy(cpu.Memory[35:], []byte{0xF0, 0x10, 0x20, 0x40, 0x40}) // 7
+	copy(cpu.Memory[40:], []byte{0xF0, 0x90, 0xF0, 0x90, 0xF0}) // 8
+	copy(cpu.Memory[45:], []byte{0xF0, 0x90, 0xF0, 0x10, 0xF0}) // 9
+	copy(cpu.Memory[50:], []byte{0xF0, 0x90, 0xF0, 0x90, 0x90}) // A
+	copy(cpu.Memory[55:], []byte{0xE0, 0x90, 0xE0, 0x90, 0xE0}) // B
+	copy(cpu.Memory[60:], []byte{0xF0, 0x80, 0x80, 0x80, 0xF0}) // C
+	copy(cpu.Memory[65:], []byte{0xE0, 0x90, 0x90, 0x90, 0xE0}) // D
+	copy(cpu.Memory[70:], []byte{0xF0, 0x80, 0xF0, 0x80, 0xF0}) // E
+	copy(cpu.Memory[75:], []byte{0xF0, 0x80, 0xF0, 0x80, 0x80}) // F
+
+	if cpu.Memory[0] != 0xF0 {
+		os.Exit(-1)
+	}
 }
 
 func (cpu *Cpu) Execute() {
@@ -58,9 +83,8 @@ func (cpu *Cpu) Decode(opcode Opcode) {
 			cpu.ProgramCounter += 2
 		} else if nn == 0xEE {
 			// 00EE Returns from a subroutine.
-			// cpu.ProgramCounter +=
-			fmt.Println("Place holder")
-			os.Exit(-1)
+			cpu.ProgramCounter = cpu.Stack[cpu.StackPointer-1]
+			cpu.StackPointer -= 1
 		} else {
 			os.Exit(-1)
 		}
@@ -69,7 +93,8 @@ func (cpu *Cpu) Decode(opcode Opcode) {
 		cpu.ProgramCounter = nnn
 	case 2:
 		// 2NNN Calls subroutine at NNN.
-		// cpu.Stack ( pc + 2)
+		cpu.Stack[cpu.StackPointer] = (cpu.ProgramCounter + 2)
+		cpu.StackPointer += 1
 		cpu.ProgramCounter = nnn
 	case 3:
 		// 3XNN	Skips the next instruction if VX equals NN.
@@ -115,23 +140,25 @@ func (cpu *Cpu) Decode(opcode Opcode) {
 		cpu.ProgramCounter = cpu.IndexRegister + uint16(cpu.ValueRegister[0])
 	case 0xC:
 		// CXNN Sets VX to the result of a bitwise and operation on a
-		fmt.Println("Place holder")
-		os.Exit(-1)
+		// random number (Typically: 0 to 255) and NN.
+		cpu.ValueRegister[x] = byte(rand.Int()%256) & nn
 		cpu.ProgramCounter += 2
 	case 0xD:
 		cpu.Draw(x, y, n)
 		cpu.ProgramCounter += 2
 	case 0xE:
-		// EX9E 	Skips the next instruction if the key stored in VX is pressed.
-		// EXA1 	Skips the next instruction if the key stored in VX isn't pressed.
-
 		if nn == 0x9E {
-			fmt.Println("Place holder")
-			os.Exit(-1)
+			// EX9E Skips the next instruction if the key stored in VX
+			// is pressed.
+			if cpu.KeyPressed[cpu.ValueRegister[x]] {
+				cpu.ProgramCounter += 2
+			}
 		} else if nn == 0xA1 {
-			fmt.Println("Place holder")
-			os.Exit(-1)
-			cpu.ProgramCounter += 2
+			// EXA1 Skips the next instruction if the key stored in VX
+			// isn't pressed.
+			if !cpu.KeyPressed[cpu.ValueRegister[x]] {
+				cpu.ProgramCounter += 2
+			}
 		} else {
 			fmt.Printf("Invalid instruction: %x\n", opcode)
 			os.Exit(-1)
@@ -214,8 +241,12 @@ func (cpu *Cpu) DecodeF(opcode Opcode) {
 		cpu.ValueRegister[x] = cpu.DelayTimer
 	case 0x0A:
 		// FX0A	A key press is awaited, and then stored in VX.
-		fmt.Println("PlaceHolder")
-		os.Exit(-1)
+		for i := 0; i < 0x10; i++ {
+			if cpu.KeyPressed[i] {
+				cpu.ValueRegister[x] = byte(i)
+				return
+			}
+		}
 		cpu.ProgramCounter -= 2
 	case 0x15:
 		// FX15	Sets the delay timer to VX.
@@ -230,7 +261,7 @@ func (cpu *Cpu) DecodeF(opcode Opcode) {
 		// FX29 Sets I to the location of the sprite for the
 		// character in VX. Characters 0-F (in hexadecimal) are
 		// represented by a 4x5 font.
-		fmt.Println("PlaceHolder")
+		cpu.IndexRegister = uint16(cpu.ValueRegister[x]) * 5
 	case 0x33:
 		// FX33 Stores the binary-coded decimal representation of
 		// VX, with the most significant of three digits at the
@@ -259,7 +290,7 @@ func (cpu *Cpu) DecodeF(opcode Opcode) {
 	}
 }
 
-func (cpu *Cpu) Draw(x byte, y byte, n byte) {
+func (cpu *Cpu) Draw(vx byte, vy byte, n byte) {
 	// DXYN Draws a sprite at coordinate (VX, VY) that has a width of
 	// 8 pixels and a height of N pixels. Each row of 8 pixels is read
 	// as bit-coded starting from memory location I; I value doesn’t
@@ -268,8 +299,8 @@ func (cpu *Cpu) Draw(x byte, y byte, n byte) {
 	// to unset when the sprite is drawn, and to 0 if that doesn’t
 	// happen
 
-	cx := cpu.ValueRegister[x]
-	cy := cpu.ValueRegister[y]
+	cx := cpu.ValueRegister[vx]
+	cy := cpu.ValueRegister[vy]
 
 	pixel_deleted := false
 
@@ -279,7 +310,15 @@ func (cpu *Cpu) Draw(x byte, y byte, n byte) {
 			pixel_x := uint16(xx) + uint16(cx)
 			pixel_y := uint16(yy) + uint16(cy)
 
-			pos := DisplayWidth*pixel_y + pixel_x
+			pixel_x %= 64
+			pixel_y %= 32
+
+			pos := 64*pixel_y + pixel_x
+
+			if pos >= 64*32 {
+				fmt.Println("Too big!", pos)
+				os.Exit(-1)
+			}
 
 			active := (b & (0x80 >> xx)) != 0
 
@@ -296,8 +335,6 @@ func (cpu *Cpu) Draw(x byte, y byte, n byte) {
 	} else {
 		cpu.ValueRegister[0x0F] = 0
 	}
-
-	cpu.PrintDisplay()
 }
 
 func (cpu *Cpu) PrintDisplay() {
@@ -322,22 +359,35 @@ func (cpu *Cpu) LoadFile(name string) {
 
 	defer file.Close()
 
-	stat, err := file.Stat()
+	_, err = file.Stat()
 
 	if err != nil {
 		fmt.Println("Could not open file: ", name, err)
 		os.Exit(-1)
 	}
 
-	if stat.Size() > (0x800) {
-		fmt.Println("File will not fit into memory")
-		os.Exit(-1)
-	}
+	// if stat.Size() > (0x800) {
+	// 	fmt.Println("File will not fit into memory")
+	// 	os.Exit(-1)
+	// }
 
 	_, err = file.Read(cpu.Memory[0x200:])
 
 	if err != nil {
 		fmt.Println("Error reading file: ", err)
 		os.Exit(-1)
+	}
+}
+
+func (cpu *Cpu) Update(c <-chan time.Time) {
+	for {
+		_ = <-c
+		//fmt.Println("Hello")
+		if cpu.SoundTimer > 0 {
+			cpu.SoundTimer--
+		}
+		if cpu.DelayTimer > 0 {
+			cpu.DelayTimer--
+		}
 	}
 }
