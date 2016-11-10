@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/chrols/chip8/cpu"
@@ -21,10 +20,11 @@ const (
 	RectWidth  = WindowWidth / 64
 	RectHeight = WindowHeight / 32
 	NumRects   = 64 * 32
+
+	SystemClock = 1000
 )
 
 var rects [NumRects]sdl.Rect
-var runningMutex sync.Mutex
 
 func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -39,9 +39,11 @@ func main() {
 	cpu.Reset()
 	cpu.LoadFile(os.Args[1])
 
-	timer := time.NewTicker(1000 / 60 * time.Millisecond)
+	delay_ticker := time.NewTicker(1000 / 60 * time.Millisecond)
+	system_ticker := time.NewTicker(time.Second / SystemClock)
 
-	go cpu.Update(timer.C)
+	go cpu.DelayTick(delay_ticker.C)
+	go cpu.CycleTick(system_ticker.C)
 
 	var window *sdl.Window
 	var renderer *sdl.Renderer
@@ -85,18 +87,20 @@ func main() {
 			H: RectHeight,
 		}
 	}
+	sdl.Do(func() {
+		renderer.Clear()
+		renderer.SetDrawColor(0, 0, 0, 0)
+		renderer.FillRect(&sdl.Rect{0, 0, WindowWidth, WindowHeight})
+	})
 
 	running := true
 	for running {
-		cpu.Execute()
 
 		sdl.Do(func() {
 			for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 				switch t := event.(type) {
 				case *sdl.QuitEvent:
-					runningMutex.Lock()
 					running = false
-					runningMutex.Unlock()
 				case *sdl.KeyDownEvent:
 					switch t.Keysym.Sym {
 					case sdl.K_ESCAPE:
@@ -113,42 +117,27 @@ func main() {
 					cpu.KeyPressed[Convert(t.Keysym.Scancode)] = false
 				}
 			}
-
-			renderer.Clear()
-			renderer.SetDrawColor(0, 0, 0, 0)
-			renderer.FillRect(&sdl.Rect{0, 0, WindowWidth, WindowHeight})
 		})
 
-		// Do expensive stuff using goroutines
-		wg := sync.WaitGroup{}
-		//for i := range rects {
-		for i := 0; i < len(rects); i++ {
-			wg.Add(1)
-			go func(i int) {
-				//rects[i].X = (rects[i].X + 10) % WindowWidth
-				sdl.Do(func() {
-					if cpu.Display[i] {
-						renderer.SetDrawColor(0xff, 0xff, 0xff, 0xff)
-					} else {
-						renderer.SetDrawColor(0, 0, 0, 0)
-					}
-					//renderer.DrawRect(&rects[i])
-					renderer.FillRect(&rects[i])
-				})
-				wg.Done()
-			}(i)
-		}
-		wg.Wait()
+		sdl.Do(func() {
+			for i := 0; i < len(rects); i++ {
+				if cpu.Display[i] {
+					renderer.SetDrawColor(0xff, 0xff, 0xff, 0xff)
+				} else {
+					renderer.SetDrawColor(0, 0, 0, 0)
+				}
+				renderer.FillRect(&rects[i])
+			}
+		})
 
 		sdl.Do(func() {
 			renderer.Present()
-			//sdl.Delay(1000 / FrameRate)
+			sdl.Delay(1000 / FrameRate)
 		})
 	}
 
 	os.Exit(0)
 }
-
 func Convert(scancode sdl.Scancode) byte {
 	switch scancode {
 	case sdl.SCANCODE_X:

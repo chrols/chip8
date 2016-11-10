@@ -379,7 +379,7 @@ func (cpu *Cpu) LoadFile(name string) {
 	}
 }
 
-func (cpu *Cpu) Update(c <-chan time.Time) {
+func (cpu *Cpu) DelayTick(c <-chan time.Time) {
 	for {
 		_ = <-c
 		//fmt.Println("Hello")
@@ -389,5 +389,12 @@ func (cpu *Cpu) Update(c <-chan time.Time) {
 		if cpu.DelayTimer > 0 {
 			cpu.DelayTimer--
 		}
+	}
+}
+
+func (cpu *Cpu) CycleTick(c <-chan time.Time) {
+	for {
+		_ = <-c
+		cpu.Execute()
 	}
 }
